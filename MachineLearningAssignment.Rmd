@@ -1,0 +1,170 @@
+---
+title: "Machine Learn Assignment"
+subtitle: "Human Activity Recognition"
+author: "Winnie"
+date: "10/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(rattle)
+
+```
+
+## Introduction
+
+The goal of this project is to predict the manner in which people did exercise. 
+
+### Weight Lift Exercises Dataset - On-body sens schema
+
+To perform this study, six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+
+- exactly accord to the specification (Class A), 
+- throw the elbows to the front (Class B), 
+- lift the dumbbell only halfway (Class C), 
+- lower the dumbbell only halfway (Class D) and 
+- throw the hips to the front (Class E).
+
+as defined in the "classe" variable in the data set.
+
+**Class A** corresponds to the **specified execution of the exercise**, while **the other 4 classes** correspond to **common mistakes**. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lift experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by us a relatively light dumbbell (1.25kg).
+
+```{r read, cache=TRUE, echo=FALSE, include=FALSE}
+
+## Download the data set
+trainURL <- "C:/Users/winni/Dropbox/Coursera/MachineLearningAssignment/pml-training.csv"
+testURL <- "C:/Users/winni/Dropbox/Coursera/MachineLearningAssignment/pml-testing.csv"
+train <- read.csv(trainURL, na.strings=c('#DIV/0', '', 'NA') , stringsAsFactors = FALSE)
+test <- read.csv(testURL, na.strings=c('#DIV/0', '', 'NA') , stringsAsFactors = FALSE)
+```
+
+The dataset has `r nrow(train)` rows and `r ncol(train)` columns.
+
+```{r preprocess, echo=FALSE, include=FALSE}
+
+## Subset and clean the data set to include only necessary data
+train <- train[,8:160]
+test <- test[,8:159]
+
+for (i in 1:152) {
+    if (class(train[,i]) == "character") {}
+        train[,i] <- as.numeric(train[,i])
+        test[,i] <- as.numeric(test[,i])
+}
+
+train[is.na(train)] <- 0 
+test[is.na(test)] <- 0 
+train$classe <- as.factor(train$classe)
+
+## Popular classification models for machine learning include logistic regression, artificial neural networks, random forest, naive bayes, K-nearest neighbor (KNN)
+```
+
+
+## Prediction Study Design
+
+1. Define error rate
+
+There are different ways to measure out of sample error rate.
+
+Continuous outcomes:   
+- RMSE = root mean squared error  
+- RSquared = sq(R) from regression models
+
+Categorical outcomes:  
+- Accuracy = Fraction correct  
+- Kappa = A measure of concordance  
+
+As we are performing a classification prediction, we would use **Accuracy** and **Kappa** as our out of sample error rate measurement. Ideally, we would like to have an Accuracy rate of more than 90%.
+
+
+2. Split data into train and test set 
+
+With a medium-sized data set, we would set our train/test set at a 6:4 ratio. 
+
+```{r dataslice}
+## Create a training (60%) and testing (40%) set
+inTrain <- createDataPartition(y = train$classe, p = 0.6, list = FALSE)
+training <- train[inTrain,]; testing <- train[-inTrain,]
+
+dim(training)
+dim(testing)
+```
+
+3. On train set, pick features using cross-validation
+
+We will 10-fold cross validation to estimate accuracy.
+
+This will split our dataset into 10 parts, train in 9 and test on 1 and release for all combinations of train-test splits. We will also repeat the process 3 times for each algorithm with different splits of the data into 10 groups, in an effort to get a more accurate estimate.
+
+```{r trainControl}
+# Run algorithms using 10-fold cross validation
+control <- trainControl(method="cv", number=10)
+metric <- "Accuracy"
+```
+
+4. On train set, pick prediction function using cross-validation
+
+Since We do not know which algorithms would be good on this problem or what configurations to use,  we will evaluate 4 common algorithms and compare their performance:
+
+- Classification and Regression Trees (CART).
+- k-Nearest Neighbors (kNN).
+- Support Vector Machines (SVM) with a linear kernel.
+- Random Forest (RF)
+
+We reset the random number seed before each run to ensure that the evaluation of each algorithm is performed using exactly the same data splits. It ensures the results are directly comparable.
+
+Let’s build our four models:
+
+```{r model, cache=TRUE}
+# CART
+set.seed(7)
+fit.cart <- train(classe~., data=training, method="rpart", metric=metric, trControl=control)
+# kNN
+set.seed(7)
+fit.knn <- train(classe~., data=training, method="knn", metric=metric, trControl=control)
+# SVM
+set.seed(7)
+fit.svm <- train(classe~., data=training, method="svmRadial", metric=metric, trControl=control)
+# Random Forest
+set.seed(7)
+fit.rf <- train(classe~., data=training, method="rf", metric=metric, trControl=control)
+
+```
+
+We now have 4 models and accuracy estimations for each. We need to compare the models to each other and select the most accurate.
+
+We can report on the accuracy of each model by first creating a list of the created models and using the summary function.
+
+```{r result}
+# summarize accuracy of models
+results <- resamples(list(cart=fit.cart, knn=fit.knn, svm=fit.svm, rf=fit.rf))
+summary(results)
+dotplot(results)
+fit.rf
+```
+
+We can see that the most accurate model in this case was **Random Forest** using 77 out of the 152 variables.
+
+5. Apply prediction one time to the test set
+
+To validate the model choice, we test the model by applying prediction one time to the test set.
+
+```{r predict}
+pred <- predict(fit.rf, testing)
+testing$predRight <- pred==testing$classe
+
+cmatrix <- confusionMatrix(table(pred, testing$classe))
+cmatrix
+```
+
+The result shows an Accuracy of `r round(cmatrix$overall[[1]],4)` and Kappa of `r round(cmatrix$overall[[2]],4)`, which aligns with the accuracy of our prediction with the training set.
+
+## Conclusion
+
+From the confusion matrix, we know that the 95% confident interval of the Accuracy lies between 0.9896 and 0.9937, so we can be very confident that Random Forest prediction model is accurate.
+
